@@ -3,6 +3,7 @@ setlocal
 chcp 65001 >nul
 rem ============================================================
 rem  subir_pdfimgtocad.bat  -  Sube TODO el contenido de esta carpeta al repositorio GitHub WMAP
+rem  y deja la app lista: https://jamanteiga.github.io/WMAP/
 rem  Uso: doble clic. La primera vez Git Credential Manager abrira el navegador para iniciar sesion.
 rem ============================================================
 set "CARPETA=C:\Users\jaman\Documents\PROYECTOS\WMAP"
@@ -42,9 +43,16 @@ if errorlevel 1 (
 git pull --rebase --autostash origin %RAMA% || goto :error
 git push -u origin %RAMA% || goto :error
 
+rem --- Activa GitHub Pages (solo si tienes GitHub CLI; si ya esta activo, lo ignora) ---
+where gh >nul 2>&1
+if not errorlevel 1 (
+  gh api -X POST repos/jamanteiga/WMAP/pages -f "source[branch]=%RAMA%" -f "source[path]=/" >nul 2>&1
+)
+
 echo.
 echo [OK] Subido a %REPO%
-echo App (GitHub Pages): https://jamanteiga.github.io/WMAP/
+echo App lista en: https://jamanteiga.github.io/WMAP/
+echo (Si da 404, activa Pages una vez: GitHub ^> WMAP ^> Settings ^> Pages ^> Deploy from branch ^> main ^> / root)
 pause
 exit /b 0
 
