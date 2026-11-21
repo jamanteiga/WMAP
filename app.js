@@ -30,6 +30,11 @@ const DB = {
     if (DEMO) { const d = Demo.get(); d[t] = d[t] || []; const r = { ...row }; if (!r.id && !(t === 'wps_pqr')) r.id = SERIAL.has(t) ? Math.max(0, ...d[t].map(x => x.id || 0)) + 1 : uuid(); d[t].push(r); Demo.save(d); return r; }
     const { data, error } = await sb.from(t).insert(row).select().single(); if (error) throw error; return data;
   },
+  async listSafe(t, order) { try { return await this.list(t, order); } catch (e) { console.warn('tabla no disponible:', t, e.message); return []; } },
+  async upsert(t, row) {
+    if (DEMO) { const d = Demo.get(); d[t] = d[t] || []; const i = d[t].findIndex(x => x.id === row.id); if (i >= 0) d[t][i] = row; else d[t].push(row); Demo.save(d); return row; }
+    const { error } = await sb.from(t).upsert(row); if (error) throw error; return row;
+  },
   async insertMany(t, rows) { for (const r of rows) await this.insert(t, r); },
   async update(t, id, patch) {
     if (DEMO) { const d = Demo.get(); const r = d[t].find(x => x.id == id); Object.assign(r, patch); Demo.save(d); return r; }
@@ -57,7 +62,7 @@ const E = {
     fields: [f('codigo', 'Código'), f('revision', 'Revisión', 'num'), f('norma_id', 'Norma', 'sel', { lookup: 'normas' }), f('fecha', 'Fecha', 'date'), f('estado', 'Estado', 'sel', { opts: ESTADOS }),
       f('tipo', 'Tipo de junta', 'sel', { opts: TIPOS }), f('clase_material', 'Material (clase)'), f('material1_id', 'Material 1 (BD)', 'sel', { lookup: 'materiales', blank: 1 }), f('material2_id', 'Material 2 (BD)', 'sel', { lookup: 'materiales', blank: 1 }),
       f('p_no_1', 'P-No 1'), f('group_1', 'Group 1'), f('p_no_2', 'P-No 2'), f('group_2', 'Group 2'), f('grupo_iso_1', 'Grupo ISO 15608 · 1'), f('grupo_iso_2', 'Grupo ISO 15608 · 2'),
-      f('espesor_mm', 'Espesor ensayo (mm)', 'num'), f('diametro_mm', 'Diámetro (mm)', 'num'), f('posicion', 'Posición'), f('precalentamiento_c', 'Precalent. (°C)', 'num'), f('interpass_max_c', 'Interpass máx (°C)', 'num'),
+      f('espesor_mm', 'Espesor ensayo (mm)', 'num'), f('diametro_mm', 'Diámetro (mm)', 'num'), f('posicion', 'Posición (PA/PC/PF… o 1G/6G…)'), f('multipasada', 'Multipasada (ISO)', 'bool'), f('precalentamiento_c', 'Precalent. (°C)', 'num'), f('interpass_max_c', 'Interpass máx (°C)', 'num'),
       f('impacto_temp_c', 'Impacto T (°C)', 'num'), f('pwht', 'PWHT', 'bool'), f('pwht_detalle', 'Detalle PWHT'), f('observaciones', 'Observaciones', 'area')],
     rel: [{ key: 'procesos', label: 'Procesos (por orden)', table: 'pqr_procesos', fk: 'pqr_id', val: 'proceso_id', lookup: 'procesos', orden: 1 }]
   },
@@ -76,8 +81,8 @@ const E = {
     title: 'WPQ', table: 'wpq', order: 'numero', lk: 'wpq',
     cols: [['numero', 'Nº'], ['soldador_id', 'Soldador', 'soldadores'], ['norma_id', 'Norma', 'normas'], ['proceso_id', 'Proceso', 'procesos'], ['posicion', 'Posición'], ['espesor_mm', 'Esp.'], ['fecha_ensayo', 'Ensayo'], ['fecha_vencimiento', 'Vence', null, 'venc'], ['estado', 'Estado']],
     fields: [f('soldador_id', 'Soldador', 'sel', { lookup: 'soldadores' }), f('numero', 'Nº cualificación'), f('norma_id', 'Norma', 'sel', { lookup: 'normas' }), f('proceso_id', 'Proceso', 'sel', { lookup: 'procesos' }),
-      f('wps_pqr_ref', 'WPS/PQR de ensayo'), f('material_ensayo_id', 'Material ensayo', 'sel', { lookup: 'materiales', blank: 1 }), f('espesor_mm', 'Espesor (mm)', 'num'), f('diametro_mm', 'Diámetro (mm)', 'num'),
-      f('posicion', 'Posición'), f('tipo', 'Tipo', 'sel', { opts: TIPOS, blank: 1 }), f('f_no', 'F-No / grupo consumible'), f('consumible_id', 'Consumible', 'sel', { lookup: 'consumibles', blank: 1 }),
+      f('wps_pqr_ref', 'WPS/PQR de ensayo'), f('material_ensayo_id', 'Material ensayo', 'sel', { lookup: 'materiales', blank: 1 }), f('espesor_mm', 'Espesor probeta (mm)', 'num'), f('espesor_depositado_mm', 'Espesor depositado t/s (mm)', 'num'), f('capas', 'Nº de capas', 'num'), f('diametro_mm', 'Diámetro (mm) · vacío=chapa', 'num'),
+      f('posicion', 'Posición (PA/PC/PF… o 1G/6G…)'), f('tipo', 'Tipo', 'sel', { opts: TIPOS, blank: 1 }), f('f_no', 'F-No / grupo consumible'), f('consumible_id', 'Consumible', 'sel', { lookup: 'consumibles', blank: 1 }),
       f('fecha_ensayo', 'Fecha ensayo', 'date'), f('fecha_vencimiento', 'Fecha vencimiento', 'date'), f('estado', 'Estado', 'sel', { opts: ESTADOS }), f('documento', 'Documento (ruta/URL)')]
   },
   soldadores: {
@@ -106,7 +111,18 @@ const E = {
     cols: [['numero_doc', 'Nº documento'], ['revision', 'Rev'], ['proyecto_id', 'Proyecto', 'proyectos'], ['fecha', 'Fecha'], ['estado', 'Estado']],
     fields: [f('proyecto_id', 'Proyecto', 'sel', { lookup: 'proyectos' }), f('numero_doc', 'Nº documento (271362-01)'), f('revision', 'Revisión', 'num'), f('estado', 'Estado', 'sel', { opts: ESTADOS }), f('fecha', 'Fecha', 'date'),
       f('dibujado', 'Dibujado por'), f('revisado', 'Revisado por'), f('aprobado', 'Aprobado por'), f('descripcion_rev', 'Descripción de la revisión', 'area', { cls: 'wall' })],
-    extra: r => `<button class="sm pri" data-act="imprimir" data-id="${r.id}">Imprimir / PDF</button>`
+    rel: [{ key: 'equipos', label: 'Equipos incluidos (vacío = todos los del proyecto)', table: 'welding_book_equipos', fk: 'welding_book_id', val: 'equipo_id', lookup: 'equipos', orden: 1 }],
+    extra: r => `<button class="sm" data-act="nuevarev" data-id="${r.id}">Nueva revisión</button> <button class="sm pri" data-act="imprimir" data-id="${r.id}">Imprimir / PDF</button>`
+  },
+  registro_soldadura: {
+    title: 'Registro de soldadura', table: 'registro_soldadura', order: 'fecha', lk: 'registro_soldadura',
+    cols: [['fecha', 'Fecha'], ['junta_id', 'Junta', 'juntas'], ['soldador_id', 'Soldador', 'soldadores'], ['wpq_id', 'WPQ', 'wpq'], ['consumible_id', 'Consumible', 'consumibles'], ['lote_consumible', 'Lote'], ['end_tipo', 'END'], ['end_resultado', 'Resultado'], ['reparacion', 'Reparación']],
+    fields: [f('junta_id', 'Junta', 'sel', { lookup: 'juntas' }), f('soldador_id', 'Soldador', 'sel', { lookup: 'soldadores' }), f('wpq_id', 'WPQ utilizada', 'sel', { lookup: 'wpq', blank: 1 }), f('fecha', 'Fecha', 'date'),
+      f('consumible_id', 'Consumible', 'sel', { lookup: 'consumibles', blank: 1 }), f('lote_consumible', 'Lote / colada consumible'), f('end_tipo', 'END (RT/UT/PT/MT/VT)'), f('end_resultado', 'Resultado END (conforme/rechazo)'), f('reparacion', 'Reparación', 'bool')]
+  },
+  end_resultados: {
+    title: 'Resultado de END', table: 'end_resultados', order: 'fecha', lk: 'end_resultados',
+    fields: [f('tipo', 'Ensayo (RT/UT/PT/MT/VT)'), f('fecha', 'Fecha', 'date'), f('informe', 'Nº de informe'), f('conforme', 'Conforme', 'bool'), f('observaciones', 'Observaciones', 'area', { cls: 'wall' })]
   },
   equipos: {
     title: 'Equipo', table: 'equipos', order: 'item', lk: 'equipos',
@@ -128,20 +144,26 @@ const LBL = {
   normas: r => r.codigo, procesos: r => `${r.codigo_aws || ''}${r.codigo_iso ? ' (' + r.codigo_iso + ')' : ''}`,
   materiales: r => `${r.especificacion} ${r.grado || ''}`.trim(), consumibles: r => r.clasificacion, soldadores: r => r.nombre,
   pqr: r => `${r.codigo}${r.revision ? ' r' + r.revision : ''} · ${(L.normas.find(n => n.id == r.norma_id) || {}).codigo || ''}`,
-  wps: r => `${r.codigo}${r.revision ? ' r' + r.revision : ''}`, proyectos: r => `${r.cliente || ''} · ${r.proyecto || ''}`
+  wps: r => `${r.codigo}${r.revision ? ' r' + r.revision : ''}`, proyectos: r => `${r.cliente || ''} · ${r.proyecto || ''}`,
+  equipos: r => `${r.item}${r.descripcion ? ' · ' + r.descripcion : ''} (${lbl('proyectos', r.proyecto_id).split(' · ')[1] || ''})`,
+  juntas: r => `${(L.equipos.find(e => e.id == r.equipo_id) || {}).item || '?'} / ${r.marca}`,
+  wpq: r => `${r.numero} · ${lbl('soldadores', r.soldador_id)} · ${lbl('procesos', r.proceso_id)}`
 };
 async function loadLookups() {
-  for (const t of ['normas', 'procesos', 'materiales', 'consumibles', 'soldadores', 'pqr', 'wps', 'proyectos']) L[t] = await DB.list(t, t === 'normas' ? 'codigo' : null);
+  for (const t of ['normas', 'procesos', 'materiales', 'consumibles', 'soldadores', 'pqr', 'wps', 'proyectos', 'equipos', 'juntas', 'wpq']) L[t] = await DB.listSafe(t, t === 'normas' ? 'codigo' : null);
 }
 const lbl = (lk, id) => { if (id == null || id === '') return ''; const r = (L[lk] || []).find(x => x.id == id); return r ? LBL[lk](r) : String(id); };
 const isNumId = lk => typeof ((L[lk] || [])[0] || {}).id === 'number';
 
 /* ================= Navegación ================= */
 const NAV = [
-  ['inicio', 'Inicio'], ['_', 'Cualificaciones'], ['pqr', 'PQR'], ['wps', 'WPS'], ['wpq', 'WPQ'], ['soldadores', 'Soldadores'],
-  ['_', 'Base de datos'], ['materiales', 'Materiales'], ['consumibles', 'Consumibles'],
-  ['_', 'Welding books'], ['proyectos', 'Proyectos y equipos'], ['welding_books', 'Documentos']
+  ['inicio', 'Inicio'], ['_', 'Cualificaciones'], ['pqr', 'PQR'], ['wps', 'WPS'], ['wpq', 'WPQ'], ['soldadores', 'Soldadores'], ['validacion', 'Validación WPS'], ['vigilancia', 'Vigilancia WPQ'],
+  ['_', 'Base de datos'], ['materiales', 'Materiales'], ['consumibles', 'Consumibles'], ['io', 'Importar / Exportar'],
+  ['_', 'Welding books'], ['proyectos', 'Proyectos y equipos'], ['welding_books', 'Documentos'],
+  ['_', 'Calidad'], ['registro_soldadura', 'Registro de soldadura'], ['avance', 'Avance y calidad'], ['end', 'Plan de END'],
+  ['_', 'Herramientas'], ['calc', 'Calculadoras'], ['ajustes', 'Ajustes']
 ];
+const VIEWS = {}, ACTS = {};
 let CUR = 'inicio';
 function renderNav() {
   $('#nav').innerHTML = `<h1>WMAP</h1><small>ASME IX · EN ISO</small>` + NAV.map(([k, l]) => k === '_' ? `<div class="grp">${l}</div>` : `<a data-nav="${k}" class="${k === CUR ? 'on' : ''}">${l}</a>`).join('') +
@@ -157,21 +179,13 @@ async function go(k, arg) {
   CUR = k; renderNav(); const m = $('#main'); m.innerHTML = '';
   try {
     if (!Object.keys(L).length || k === 'inicio') await loadLookups();
-    if (k === 'inicio') await viewInicio(); else if (k === 'equipos') await viewEquipos(arg); else await viewLista(k);
+    if (k === 'inicio') await viewInicio(); else if (k === 'equipos') await viewEquipos(arg); else if (VIEWS[k]) await VIEWS[k](arg); else await viewLista(k);
   } catch (err) { console.error(err); toast(err.message || String(err), true); }
   if (k === 'equipos') CUR = 'proyectos', renderNav();
 }
 
-/* ================= Inicio ================= */
-async function viewInicio() {
-  const wpq = await DB.list('wpq'); const hoy = new Date(); const en60 = new Date(Date.now() + 60 * 864e5);
-  const venc = wpq.filter(w => w.fecha_vencimiento && new Date(w.fecha_vencimiento) < hoy), prox = wpq.filter(w => w.fecha_vencimiento && new Date(w.fecha_vencimiento) >= hoy && new Date(w.fecha_vencimiento) <= en60);
-  const k = (n, l, to) => `<div class="kpi" data-nav="${to}"><b>${n}</b>${l}</div>`;
-  $('#main').innerHTML = (DEMO ? demoBanner() : '') + `<div class="top"><h2>Inicio</h2></div>
-  <div class="kpis">${k(L.pqr.length, 'PQR', 'pqr')}${k(L.wps.length, 'WPS', 'wps')}${k(wpq.length, 'WPQ', 'wpq')}${k(L.soldadores.length, 'Soldadores', 'soldadores')}${k(L.materiales.length, 'Materiales', 'materiales')}${k(L.proyectos.length, 'Proyectos', 'proyectos')}</div>
-  <h3>Cualificaciones de soldador a vigilar</h3>
-  <div class="card"><table><tr><th>Soldador</th><th>Nº</th><th>Proceso</th><th>Vence</th><th></th></tr>${[...venc, ...prox].map(w => `<tr><td>${esc(lbl('soldadores', w.soldador_id))}</td><td>${esc(w.numero)}</td><td>${esc(lbl('procesos', w.proceso_id))}</td><td>${esc(w.fecha_vencimiento)}</td><td>${new Date(w.fecha_vencimiento) < hoy ? '<span class="badge b-bad">vencida</span>' : '<span class="badge b-warn">&lt; 60 días</span>'}</td></tr>`).join('') || '<tr><td colspan=5 class="hint">Sin vencimientos próximos.</td></tr>'}</table></div>`;
-}
+/* ================= Inicio (se redefine en modulos.js) ================= */
+let viewInicio = async function () {};
 const demoBanner = () => `<div class="demo">MODO DEMO · datos solo en este navegador. Para usar Supabase rellena <b>config.js</b>. <button class="sm" data-act="resetdemo">Reiniciar demo</button></div>`;
 
 /* ================= Listado genérico ================= */
@@ -187,7 +201,7 @@ const fmt = (v, c) => {
 };
 async function viewLista(k) {
   const ent = E[k]; const rows = await DB.list(ent.table, ent.order); ent._rows = rows;
-  $('#main').innerHTML = (DEMO ? demoBanner() : '') + `<div class="top"><h2>${ent.title} <span class="hint">(${rows.length})</span></h2><input class="search" id="q" placeholder="Buscar…"><button class="pri" data-act="nuevo">+ Nuevo</button></div><div class="card" id="tbl"></div>`;
+  $('#main').innerHTML = (DEMO ? demoBanner() : '') + `<div class="top"><h2>${ent.title} <span class="hint">(${rows.length})</span></h2><input class="search" id="q" placeholder="Buscar…"><button data-act="export">Excel</button><button class="pri" data-act="nuevo">+ Nuevo</button></div><div class="card" id="tbl"></div>`;
   const draw = () => {
     const q = $('#q').value.toLowerCase();
     const vis = rows.filter(r => !q || ent.cols.some(c => String(c[2] ? lbl(c[2], r[c[0]]) : r[c[0]] ?? '').toLowerCase().includes(q)));
@@ -206,6 +220,7 @@ document.addEventListener('click', async e => {
     else if (act === 'del') { if (!confirm('¿Eliminar este registro?')) return; await DB.remove(ent.table, id); toast('Eliminado'); Object.keys(L).forEach(x => delete L[x]); go(CUR); }
     else if (act === 'equipos') go('equipos', id);
     else if (act === 'imprimir') imprimirDocumento(id);
+    else if (ACTS[act]) await ACTS[act](ent, row, b);
   } catch (err) { toast(err.message || String(err), true); }
 });
 
@@ -254,6 +269,7 @@ async function openForm(ent, row, opts, done) {
     ev.preventDefault();
     try {
       const vals = { ...readForm(ent, ev.target), ...(opts.fixed || {}) }; let id = row?.id;
+      if (ent.check) { const av = await ent.check(vals, row); if (av && av.length && !confirm('Avisos:\n· ' + av.join('\n· ') + '\n\n¿Guardar igualmente?')) return; }
       if (id) await DB.update(ent.table, id, vals); else id = (await DB.insert(ent.table, vals)).id;
       for (const r of ent.rel || []) {
         const sel = [...document.querySelectorAll(`[data-rel="${r.key}"] input:checked`)].map(x => isNumId(r.lookup) ? Number(x.value) : x.value);
@@ -332,23 +348,6 @@ async function viewEquipos(pid) {
   };
 }
 
-/* ================= Impresión del welding book ================= */
-async function imprimirDocumento(bookId) {
-  const wb = (await DB.list('welding_books')).find(b => b.id == bookId); const pr = L.proyectos.find(p => p.id == wb.proyecto_id) || {};
-  const eqs = (await DB.where('equipos', 'proyecto_id', wb.proyecto_id)).sort((a, b) => String(a.item).localeCompare(String(b.item), 'es', { numeric: true }));
-  const th = `<th>JOINT MARK</th><th colspan=4>PART 1 (descr · OD · spec · th)</th><th colspan=4>PART 2 (descr · OD · spec · th)</th><th>WELD DTL</th><th>a</th><th>b</th><th>c</th><th>WELDING PROCESS</th><th>W.P.S. No.</th>`;
-  const head = `Document No.: ${esc(wb.numero_doc)} · Rev.: ${esc(wb.revision)}`;
-  let html = `<div class="pg"><h1>WELDING BOOK</h1><table class="meta cover"><tr><td>DOCUMENT</td><td>WELDING BOOK</td></tr><tr><td>CLIENT</td><td>${esc(pr.cliente)}</td></tr><tr><td>PROJECT</td><td>${esc(pr.proyecto)}</td></tr><tr><td>PURCHASE ORDER</td><td>${esc(pr.pedido)}</td></tr><tr><td>REFERENCE</td><td>${esc(pr.referencia)}</td></tr><tr><td>ITEMS</td><td>${esc(eqs.map(e => e.item).join(', '))}</td></tr><tr><td>LOCATION</td><td>${esc(pr.ubicacion)}</td></tr><tr><td>DOC. Nº / REV.</td><td>${esc(wb.numero_doc)} / ${esc(wb.revision)}</td></tr><tr><td>DRAWN / CHECKED / APPROVED</td><td>${esc(wb.dibujado)} / ${esc(wb.revisado)} / ${esc(wb.aprobado)} · ${esc(wb.fecha)}</td></tr><tr><td>REV. DESCRIPTION</td><td>${esc(wb.descripcion_rev)}</td></tr></table></div>`;
-  for (const eq of eqs) {
-    const js = (await DB.where('juntas', 'equipo_id', eq.id)).sort((a, b) => String(a.marca).localeCompare(String(b.marca), 'es', { numeric: true }));
-    const mat = id => { const m = L.materiales.find(x => x.id == id); return m ? `${m.especificacion} ${m.grado || ''}` : ''; };
-    html += `<div class="pg"><h2>LIST OF PIECES TO BE WELDED — ITEM Nº ${esc(eq.item)} · ${head}</h2><table><tr>${th}</tr>` + js.map(j => `<tr><td>${esc(j.marca)}</td><td>${esc(j.pieza1_desc)}</td><td>${esc(j.pieza1_od)}</td><td>${esc(mat(j.pieza1_material_id))}</td><td>${esc(j.pieza1_esp_mm)}</td><td>${esc(j.pieza2_desc)}</td><td>${esc(j.pieza2_od)}</td><td>${esc(mat(j.pieza2_material_id))}</td><td>${esc(j.pieza2_esp_mm)}</td><td>${j.tipo === 'filete' ? 'Fillet' : 'BW'}</td><td>${esc(j.garganta_a)}</td><td>${esc(j.garganta_b)}</td><td>${esc(j.garganta_c)}</td><td>${esc(j.procesos)}</td><td>${esc(lbl('wps', j.wps_id))}</td></tr>`).join('') + `</table></div>`;
-    html += `<div class="pg"><h2>WELDING MAP WITH JOINT MARKS — ITEM Nº ${esc(eq.item)} · ${head}</h2><div style="display:flex;gap:14px;align-items:flex-start"><table class="meta" style="width:42%"><tr><td>Code</td><td>${esc(eq.codigo_diseno)}</td></tr><tr><td>Design Pressure</td><td>${esc(eq.presion_diseno)}</td></tr><tr><td>Radiography</td><td>${esc(eq.radiografia)}</td></tr><tr><td>Joint efficiency</td><td>${esc(eq.eficiencia_junta)}</td></tr><tr><td>Corrosion allowance (mm)</td><td>${esc(eq.sobreespesor_corrosion_mm)}</td></tr><tr><td>Post weld heat treatment</td><td>${eq.pwht ? 'Yes' : 'No'}</td></tr><tr><td>Hardness</td><td>${eq.dureza ? 'Yes' : 'No'}</td></tr><tr><td>Impact test (ºC)</td><td>${esc(eq.resiliencia_c ?? 'No')}</td></tr><tr><td>Service</td><td>${esc(eq.servicio)}</td></tr></table>` +
-      (eq.croquis ? `<div class="croquis" style="flex:1;text-align:center"><img src="${eq.croquis}">${js.filter(j => j.mapa_x != null).map(j => `<span class="pin" style="left:${j.mapa_x * 100}%;top:${j.mapa_y * 100}%">${esc(j.marca)}</span>`).join('')}</div>` : '') + `</div></div>`;
-  }
-  $('#print').innerHTML = html; setTimeout(() => window.print(), 250);
-}
-
 /* ================= Arranque y login ================= */
 async function start() {
   $('#login').style.display = 'none'; $('#app').style.display = 'flex'; renderNav(); go('inicio');
@@ -392,4 +391,4 @@ function seed() {
 }
 
 window.addEventListener('keydown', e => { if (e.key === 'Escape') $('#modal').classList.add('hidden'); });
-boot();
+window.addEventListener('DOMContentLoaded', boot);
