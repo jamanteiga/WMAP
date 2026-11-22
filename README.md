@@ -17,3 +17,5 @@ App web estática (HTML + JS) con Supabase: PQR, WPS, WPQ, base de datos de mate
 - **Calculadoras**: precalentamiento EN 1011-2, aporte térmico, consumibles, garganta/cateto, Larson-Miller.
 
 Ejecuta `sql/05_extensiones.sql` en Supabase tras los anteriores.
+
+- **Fichas Facet** WPS (2 hojas) y PQR (3 hojas) ASME IX en tu formato (`plantillas.js`), con editor «Datos ficha» y plantillas en blanco (Importar/Exportar). Ejecuta `sql/06_plantillas_ficha.sql` (añade `datos` y carga F019 y F019/A2 como ejemplo).
